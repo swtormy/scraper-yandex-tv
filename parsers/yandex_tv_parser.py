@@ -222,8 +222,21 @@ async def parse_yandex_schedule():
 
     total_events = len(all_parsed_events_for_upsert)
     logger.info(
-        f"Всего собрано {total_events} событий. Начинаю сохранение/обновление в БД..."
+        f"Всего собрано {total_events} событий. Выполняю дедупликацию по event_id..."
     )
+
+    unique_events_map = {}
+    for event_data in all_parsed_events_for_upsert:
+        event_id = event_data.get("event_id")
+        if event_id:
+            unique_events_map[event_id] = event_data
+
+    deduplicated_events = list(unique_events_map.values())
+    final_event_count = len(deduplicated_events)
+    if total_events != final_event_count:
+        logger.info(f"После дедупликации осталось {final_event_count} уникальных событий (удалено {total_events - final_event_count}).")
+    else:
+        logger.info("Дубликатов не найдено.")
 
     log_file_path = os.path.join("logs", "parsed_events_raw.json")
     try:
@@ -238,7 +251,7 @@ async def parse_yandex_schedule():
             f"Не удалось сохранить сырые события в {log_file_path}: {save_err}"
         )
 
-    if not all_parsed_events_for_upsert:
+    if not deduplicated_events:
         logger.info("Нет событий для сохранения в БД.")
         return
 
@@ -246,10 +259,10 @@ async def parse_yandex_schedule():
     batch_size = 50
     try:
         async with uow:
-            logger.info(f"Начинаю сохранение/обновление {total_events} событий в БД...")
-            pbar = tqdm(total=total_events, desc="Сохранение в БД", unit=" событий")
-            for i in range(0, total_events, batch_size):
-                batch = all_parsed_events_for_upsert[i : i + batch_size]
+            logger.info(f"Начинаю сохранение/обновление {final_event_count} событий в БД...")
+            pbar = tqdm(total=final_event_count, desc="Сохранение в БД", unit=" событий")
+            for i in range(0, final_event_count, batch_size):
+                batch = deduplicated_events[i : i + batch_size]
                 if not batch:
                     continue
 
@@ -265,11 +278,11 @@ async def parse_yandex_schedule():
                     raise
             pbar.close()
             logger.info(
-                f"Все батчи ({total_events} событий) подготовлены. Попытка выполнить commit..."
+                f"Все батчи ({final_event_count} событий) подготовлены. Попытка выполнить commit..."
             )
             await uow.commit()
             logger.success(
-                f"Commit выполнен успешно. {total_events} событий сохранено/обновлено."
+                f"Commit выполнен успешно. {final_event_count} событий сохранено/обновлено."
             )
 
     except Exception as e:
