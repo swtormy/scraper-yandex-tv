@@ -10,12 +10,11 @@ from database.models.mldb import TVSchedule
 class TVScheduleRepository(BaseRepository):
     model = TVSchedule
 
-    _game_pattern = re.compile(r'\S+\s[-‑–—]\s\S+')
+    _game_pattern = re.compile("(['\"]?\\S+['\"]?)\\s+(?:[-‑–—]|vs\\.?|и)\\s+(?P<opponent>['\"]?\\S+['\"]?)", re.IGNORECASE)
     _exclude_patterns = [
-        re.compile(r'\d+-я\s+серия', re.IGNORECASE),
-        re.compile(r'сезон', re.IGNORECASE),
-        re.compile(r'выпуск', re.IGNORECASE),
-        re.compile(r'E:\d+\s*-', re.IGNORECASE)
+        re.compile('\\d+-я\\s+серия', re.IGNORECASE),
+        re.compile('выпуск', re.IGNORECASE),
+        re.compile('E:\\d+\\s*-', re.IGNORECASE)
     ]
 
     def _is_game_event(self, title: str) -> bool:
