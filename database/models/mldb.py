@@ -29,6 +29,8 @@ class TVSchedule(Base):
     has_finished = Column(Boolean, nullable=False, default=False)
     is_now = Column(Boolean, nullable=False, default=False)
 
+    is_game = Column(Boolean, nullable=False, default=False)
+
     event_id = Column(Integer, primary_key=True)
     event_title = Column(String, nullable=False)
 

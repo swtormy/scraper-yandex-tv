@@ -1,6 +1,7 @@
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import or_
+import re
 
 from database.repository.base import BaseRepository
 from database.models.mldb import TVSchedule
@@ -8,6 +9,23 @@ from database.models.mldb import TVSchedule
 
 class TVScheduleRepository(BaseRepository):
     model = TVSchedule
+
+    _game_pattern = re.compile(r'\S+\s[-‑–—]\s\S+')
+    _exclude_patterns = [
+        re.compile(r'\d+-я\s+серия', re.IGNORECASE),
+        re.compile(r'сезон', re.IGNORECASE),
+        re.compile(r'выпуск', re.IGNORECASE),
+        re.compile(r'E:\d+\s*-', re.IGNORECASE)
+    ]
+
+    def _is_game_event(self, title: str) -> bool:
+        """Проверяет, является ли событие игрой, на основе заголовка."""
+        if self._game_pattern.search(title):
+            for exclude in self._exclude_patterns:
+                if exclude.search(title):
+                    return False
+            return True
+        return False
 
     async def find_by_event_id(self, event_id: int) -> TVSchedule | None:
         stmt = select(self.model).where(self.model.event_id == event_id)
@@ -18,7 +36,13 @@ class TVScheduleRepository(BaseRepository):
         if not event_data_list:
             return
 
-        insert_stmt = pg_insert(self.model.__table__).values(event_data_list)
+        processed_event_data_list = []
+        for event_data in event_data_list:
+            title = event_data.get("event_title", "")
+            event_data['is_game'] = self._is_game_event(title)
+            processed_event_data_list.append(event_data)
+
+        insert_stmt = pg_insert(self.model.__table__).values(processed_event_data_list)
 
         update_cols = {
             "channel_title": insert_stmt.excluded.channel_title,
@@ -34,6 +58,7 @@ class TVScheduleRepository(BaseRepository):
             "has_started": insert_stmt.excluded.has_started,
             "has_finished": insert_stmt.excluded.has_finished,
             "is_now": insert_stmt.excluded.is_now,
+            "is_game": insert_stmt.excluded.is_game,
             "event_title": insert_stmt.excluded.event_title,
             "start_time_utc": insert_stmt.excluded.start_time_utc,
             "end_time_utc": insert_stmt.excluded.end_time_utc,
