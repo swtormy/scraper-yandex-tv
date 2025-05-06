@@ -16,6 +16,41 @@ from .schemas import EventModel
 
 BASE_URL = "https://tv.yandex.ru/api/213"
 CHUNK_URL = "https://tv.yandex.ru/api/213/main/chunk"
+SK_URL = "https://tv.yandex.ru/api/sk"
+
+
+async def _fetch_sk_key(
+    session: aiohttp.ClientSession, cookies: Dict[str, str], base_headers: Dict[str, str]
+) -> Optional[str]:
+    """Получает ключ X-TV-SK с сервера Яндекс.ТВ."""
+    logger.info("Запрос ключа X-TV-SK...")
+    try:
+        request_headers = base_headers.copy()
+        if cookies:
+            request_headers["Cookie"] = "; ".join([f"{k}={v}" for k, v in cookies.items()])
+
+        async with session.get(SK_URL, headers=request_headers, ssl=False) as response:
+            response.raise_for_status()
+            data = await response.json()
+            sk_key = data.get("sk", {}).get("key")
+            if sk_key:
+                logger.info(f"Успешно получен X-TV-SK ключ: {sk_key[:10]}...")
+                return sk_key
+            else:
+                logger.error("Ключ 'sk.key' не найден в ответе от /api/sk.")
+                logger.debug(f"Полный ответ от /api/sk: {data}")
+                return None
+    except aiohttp.ClientResponseError as e:
+        logger.error(
+            f"HTTP ошибка при запросе X-TV-SK ключа: {e.status} {e.message}"
+        )
+    except aiohttp.ClientError as e:
+        logger.error(f"Ошибка клиента aiohttp при запросе X-TV-SK ключа: {e}")
+    except json.JSONDecodeError as e:
+        logger.error(f"Ошибка декодирования JSON при запросе X-TV-SK ключа: {e}")
+    except Exception as e:
+        logger.exception("Неожиданная ошибка при запросе X-TV-SK ключа.")
+    return None
 
 
 async def _fetch_schedule_page(
@@ -130,13 +165,22 @@ async def parse_yandex_schedule():
             "Cookies или Headers не заданы в конфигурации. Парсинг может не работать."
         )
 
-    today = datetime.now(timezone.utc).date()
-    all_parsed_events_for_upsert = []
-    raw_events_for_logging = []
-
-    i = 0
     async with aiohttp.ClientSession() as session:
-        headers["Cookie"] = "; ".join([f"{k}={v}" for k, v in cookies.items()])
+        sk_key = await _fetch_sk_key(session, cookies, headers)
+        if not sk_key:
+            logger.error("Не удалось получить X-TV-SK ключ. Прерывание парсинга.")
+            return
+
+        current_headers = headers.copy()
+        current_headers["X-TV-SK"] = sk_key
+        if cookies:
+            current_headers["Cookie"] = "; ".join([f"{k}={v}" for k, v in cookies.items()])
+
+        today = datetime.now(timezone.utc).date()
+        all_parsed_events_for_upsert = []
+        raw_events_for_logging = []
+
+        i = 0
         while True:
             target_date = today + timedelta(days=i)
             target_date_str = target_date.strftime("%Y-%m-%d")
@@ -148,7 +192,7 @@ async def parse_yandex_schedule():
             }
 
             initial_data = await _fetch_schedule_page(
-                session, BASE_URL, base_params, headers
+                session, BASE_URL, base_params, current_headers
             )
 
             if initial_data is None:
@@ -183,7 +227,7 @@ async def parse_yandex_schedule():
                         "limit": chunk_info["limit"],
                     }
                     chunk_data = await _fetch_schedule_page(
-                        session, CHUNK_URL, chunk_params, headers
+                        session, CHUNK_URL, chunk_params, current_headers
                     )
                     if chunk_data and "schedules" in chunk_data:
                         day_schedules.extend(chunk_data["schedules"])
