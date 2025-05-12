@@ -9,8 +9,8 @@ from utils.notifications import TGBotAPI, ParseMode
 
 
 def escape_markdown_v2(text: str) -> str:
-    escape_chars = r"[_*\[\]()~`>#+-=|{}.!]"
-    return re.sub(escape_chars, r"\\1", text)
+    escape_chars = r"[_*\`\[\]()~>#+-=|{}.!]"
+    return re.sub(escape_chars, r"\\\g<0>", text)
 
 
 def handle_critical_error():
@@ -29,8 +29,8 @@ def handle_critical_error():
                 error_message_escaped = escape_markdown_v2(str(e))
 
                 error_message_tg = (
-                    f"🚨 *CRITICAL ERROR* in `{func_name_escaped}` 🚨\\n\\n"
-                    f"*Error Type:* `{error_type_escaped}`\\n"
+                    f"🚨 *CRITICAL ERROR* in `{func_name_escaped}` 🚨\n\n"
+                    f"*Error Type:* `{error_type_escaped}`\n"
                     f"*Message:* `{error_message_escaped}`"
                 )
 
