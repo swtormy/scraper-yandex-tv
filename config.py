@@ -4,10 +4,6 @@ from pathlib import Path
 from loguru import logger
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-cookies = {}
-
-headers = {}
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -25,8 +21,8 @@ class Settings(BaseSettings):
 
     DEBUG: bool = False
 
-    YANDEX_TV_COOKIES: dict[str, str] = {}
-    YANDEX_TV_HEADERS: dict[str, str] = {}
+    YANDEX_TV_COOKIE_I: str = ""
+    YANDEX_TV_X_SK: str = ""
 
 
 settings = Settings()

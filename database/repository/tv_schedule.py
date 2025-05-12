@@ -10,11 +10,14 @@ from database.models.mldb import TVSchedule
 class TVScheduleRepository(BaseRepository):
     model = TVSchedule
 
-    _game_pattern = re.compile("(['\"]?\\S+['\"]?)\\s+(?:[-‑–—]|vs\\.?|и)\\s+(?P<opponent>['\"]?\\S+['\"]?)", re.IGNORECASE)
+    _game_pattern = re.compile(
+        "(['\"]?\\S+['\"]?)\\s+(?:[-‑–—]|vs\\.?|и)\\s+(?P<opponent>['\"]?\\S+['\"]?)",
+        re.IGNORECASE,
+    )
     _exclude_patterns = [
-        re.compile('\\d+-я\\s+серия', re.IGNORECASE),
-        re.compile('выпуск', re.IGNORECASE),
-        re.compile('E:\\d+\\s*-', re.IGNORECASE)
+        re.compile("\\d+-я\\s+серия", re.IGNORECASE),
+        re.compile("выпуск", re.IGNORECASE),
+        re.compile("E:\\d+\\s*-", re.IGNORECASE),
     ]
 
     def _is_game_event(self, title: str) -> bool:
@@ -38,7 +41,7 @@ class TVScheduleRepository(BaseRepository):
         processed_event_data_list = []
         for event_data in event_data_list:
             title = event_data.get("event_title", "")
-            event_data['is_game'] = self._is_game_event(title)
+            event_data["is_game"] = self._is_game_event(title)
             processed_event_data_list.append(event_data)
 
         insert_stmt = pg_insert(self.model.__table__).values(processed_event_data_list)

@@ -53,5 +53,4 @@ async def get_mldb_uow() -> MldbUow:
 
 async def init_db():
     async with async_engine.begin() as conn:
-        await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {settings.MLDB_SCHEMA}"))
         await conn.run_sync(Base.metadata.create_all)

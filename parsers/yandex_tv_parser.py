@@ -4,52 +4,19 @@ import os
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Dict, Optional
-from pathlib import Path
 
 import aiohttp
 from loguru import logger
 from pydantic import ValidationError
 from tqdm.asyncio import tqdm
 
-from config import settings, cookies as DEFAULT_COOKIES, headers as DEFAULT_HEADERS
+from config import settings
 from database.uow.mldb import MldbUow
 from .schemas import EventModel
 
 BASE_URL = "https://tv.yandex.ru/api/213"
 CHUNK_URL = "https://tv.yandex.ru/api/213/main/chunk"
 SK_URL = "https://tv.yandex.ru/api/sk"
-
-# Путь к файлу для хранения X-TV-SK ключа в корне проекта
-SK_FILE_PATH = Path(__file__).resolve().parent.parent / "sk_key.txt"
-
-
-def _load_sk_from_file() -> Optional[str]:
-    """Загружает X-TV-SK ключ из файла sk_key.txt."""
-    if SK_FILE_PATH.exists():
-        try:
-            with open(SK_FILE_PATH, "r", encoding="utf-8") as f:
-                key = f.read().strip()
-                if key:
-                    logger.info(f"X-TV-SK ключ загружен из файла: {key[:10]}...")
-                    return key
-                else:
-                    logger.warning(f"Файл {SK_FILE_PATH} пуст.")
-                    return None
-        except Exception as e:
-            logger.error(f"Ошибка чтения файла {SK_FILE_PATH}: {e}")
-            return None
-    else:
-        logger.info(f"Файл {SK_FILE_PATH} не найден. Будет использован SK из конфигурации (если есть).")
-        return None
-
-def _save_sk_to_file(sk_key: str) -> None:
-    """Сохраняет X-TV-SK ключ в файл sk_key.txt."""
-    try:
-        with open(SK_FILE_PATH, "w", encoding="utf-8") as f:
-            f.write(sk_key)
-        logger.info(f"Новый X-TV-SK ключ сохранен в {SK_FILE_PATH}: {sk_key[:10]}...")
-    except Exception as e:
-        logger.error(f"Ошибка сохранения X-TV-SK ключа в файл {SK_FILE_PATH}: {e}")
 
 
 async def _fetch_sk_key(
@@ -181,54 +148,20 @@ async def parse_yandex_schedule():
     """
     logger.info("Начало парсинга расписания Яндекс.ТВ...")
 
-    # 1. Загрузка базовых cookies и headers
-    try:
-        base_cookies: Dict[str, str] = settings.YANDEX_TV_COOKIES or DEFAULT_COOKIES
-        base_headers: Dict[str, str] = settings.YANDEX_TV_HEADERS or DEFAULT_HEADERS
-    except json.JSONDecodeError as e: # Это исключение маловероятно здесь, т.к. DEFAULT_COOKIES/HEADERS статичны
-        logger.error(
-            f"Ошибка декодирования JSON из настроек cookies/headers: {e}. Проверьте формат в .env"
-        )
-        return
-    except Exception as e:
-        logger.exception("Неожиданная ошибка при чтении настроек cookies/headers.")
+    cookie_i = settings.YANDEX_TV_COOKIE_I
+    x_tv_sk = settings.YANDEX_TV_X_SK
+
+    if not cookie_i or not x_tv_sk:
+        logger.error("Не заданы переменные окружения YANDEX_TV_COOKIE_I и/или YANDEX_TV_X_SK. Прерывание парсинга.")
         return
 
-    if not base_cookies or not base_headers:
-        logger.warning(
-            "Cookies или Headers не заданы в конфигурации. Парсинг может не работать."
-        )
-        # Не прерываем, т.к. SK может быть в файле и этого может быть достаточно для его обновления
-
-    # 2. Попытка загрузить SK-ключ из файла и обновить им base_headers
-    # Копируем, чтобы не изменять DEFAULT_HEADERS напрямую
-    request_specific_headers = base_headers.copy()
-    loaded_sk = _load_sk_from_file()
-    if loaded_sk:
-        request_specific_headers["X-TV-SK"] = loaded_sk
-    elif "X-TV-SK" not in request_specific_headers: # Если и в файле нет, и в конфиге/env нет
-        logger.error("X-TV-SK ключ отсутствует и в файле, и в конфигурации. Невозможно запросить новый ключ.")
-        return
-
+    headers = {
+        "X-Requested-With": "XMLHttpRequest",
+        "X-TV-SK": x_tv_sk,
+        "Cookie": f"i={cookie_i}"
+    }
 
     async with aiohttp.ClientSession() as session:
-        # 3. Получение актуального SK-ключа с сервера
-        new_sk_key = await _fetch_sk_key(session, base_cookies, request_specific_headers)
-
-        if not new_sk_key:
-            logger.error("Не удалось получить X-TV-SK ключ. Прерывание парсинга.")
-            return
-
-        # 4. Сохранение нового SK-ключа в файл
-        if new_sk_key != request_specific_headers.get("X-TV-SK"): # Сохраняем, если он действительно новый
-            _save_sk_to_file(new_sk_key)
-
-        # 5. Подготовка текущих заголовков для парсинга
-        current_headers_for_parsing = base_headers.copy() # Начинаем с базовых (из config/env)
-        current_headers_for_parsing["X-TV-SK"] = new_sk_key # Устанавливаем самый свежий SK
-        if base_cookies:
-            current_headers_for_parsing["Cookie"] = "; ".join([f"{k}={v}" for k, v in base_cookies.items()])
-        
         today = datetime.now(timezone.utc).date()
         all_parsed_events_for_upsert = []
         raw_events_for_logging = []
@@ -245,7 +178,7 @@ async def parse_yandex_schedule():
             }
 
             initial_data = await _fetch_schedule_page(
-                session, BASE_URL, base_params, current_headers_for_parsing
+                session, BASE_URL, base_params, headers
             )
 
             if initial_data is None:
@@ -280,7 +213,7 @@ async def parse_yandex_schedule():
                         "limit": chunk_info["limit"],
                     }
                     chunk_data = await _fetch_schedule_page(
-                        session, CHUNK_URL, chunk_params, current_headers_for_parsing
+                        session, CHUNK_URL, chunk_params, headers
                     )
                     if chunk_data and "schedules" in chunk_data:
                         day_schedules.extend(chunk_data["schedules"])
