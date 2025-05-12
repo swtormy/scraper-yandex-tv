@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     YANDEX_TV_COOKIE_I: str = ""
     YANDEX_TV_X_SK: str = ""
 
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
+
 
 settings = Settings()
 

@@ -14,6 +14,7 @@ from tqdm.asyncio import tqdm
 from config import settings
 from database.uow.mldb import MldbUow
 from .schemas import EventModel
+from utils.error_handling import handle_critical_error
 
 BASE_URL = "https://tv.yandex.ru/api/213"
 CHUNK_URL = "https://tv.yandex.ru/api/213/main/chunk"
@@ -174,6 +175,7 @@ def _parse_event_data(event_dict: dict, channel_title: str) -> Optional[Dict]:
     return None
 
 
+@handle_critical_error()
 async def parse_yandex_schedule():
     """
     Основная функция для парсинга расписания Яндекс.Телепрограммы за 5 дней
