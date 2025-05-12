@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Dict, Optional
+from pathlib import Path
 
 import aiohttp
 from loguru import logger
@@ -18,16 +19,50 @@ BASE_URL = "https://tv.yandex.ru/api/213"
 CHUNK_URL = "https://tv.yandex.ru/api/213/main/chunk"
 SK_URL = "https://tv.yandex.ru/api/sk"
 
+SK_FILE_PATH = Path(__file__).resolve().parent.parent / "sk_key.txt"
+
+
+def _load_sk_from_file() -> Optional[str]:
+    if SK_FILE_PATH.exists():
+        try:
+            with open(SK_FILE_PATH, "r", encoding="utf-8") as f:
+                key = f.read().strip()
+                if key:
+                    logger.info(f"X-TV-SK ключ загружен из файла: {key}...")
+                    return key
+                else:
+                    logger.warning(f"Файл {SK_FILE_PATH} пуст.")
+                    return None
+        except Exception as e:
+            logger.error(f"Ошибка чтения файла {SK_FILE_PATH}: {e}")
+            return None
+    else:
+        logger.info(f"Файл {SK_FILE_PATH} не найден.")
+        return None
+
+
+def _save_sk_to_file(sk_key: str) -> None:
+    try:
+        with open(SK_FILE_PATH, "w", encoding="utf-8") as f:
+            f.write(sk_key)
+        logger.info(f"Новый X-TV-SK ключ сохранен в {SK_FILE_PATH}: {sk_key[:10]}...")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения X-TV-SK ключа в файл {SK_FILE_PATH}: {e}")
+
 
 async def _fetch_sk_key(
-    session: aiohttp.ClientSession, cookies: Dict[str, str], base_headers: Dict[str, str]
+    session: aiohttp.ClientSession,
+    cookies: Dict[str, str],
+    base_headers: Dict[str, str],
 ) -> Optional[str]:
     """Получает ключ X-TV-SK с сервера Яндекс.ТВ."""
     logger.info("Запрос ключа X-TV-SK...")
     try:
         request_headers = base_headers.copy()
         if cookies:
-            request_headers["Cookie"] = "; ".join([f"{k}={v}" for k, v in cookies.items()])
+            request_headers["Cookie"] = "; ".join(
+                [f"{k}={v}" for k, v in cookies.items()]
+            )
 
         async with session.get(SK_URL, headers=request_headers, ssl=False) as response:
             response.raise_for_status()
@@ -41,9 +76,7 @@ async def _fetch_sk_key(
                 logger.debug(f"Полный ответ от /api/sk: {data}")
                 return None
     except aiohttp.ClientResponseError as e:
-        logger.error(
-            f"HTTP ошибка при запросе X-TV-SK ключа: {e.status} {e.message}"
-        )
+        logger.error(f"HTTP ошибка при запросе X-TV-SK ключа: {e.status} {e.message}")
     except aiohttp.ClientError as e:
         logger.error(f"Ошибка клиента aiohttp при запросе X-TV-SK ключа: {e}")
     except json.JSONDecodeError as e:
@@ -149,19 +182,43 @@ async def parse_yandex_schedule():
     logger.info("Начало парсинга расписания Яндекс.ТВ...")
 
     cookie_i = settings.YANDEX_TV_COOKIE_I
-    x_tv_sk = settings.YANDEX_TV_X_SK
+    x_tv_sk_current = _load_sk_from_file()
+    if not x_tv_sk_current:
+        x_tv_sk_current = settings.YANDEX_TV_X_SK
 
-    if not cookie_i or not x_tv_sk:
-        logger.error("Не заданы переменные окружения YANDEX_TV_COOKIE_I и/или YANDEX_TV_X_SK. Прерывание парсинга.")
+    if not cookie_i or not x_tv_sk_current:
+        logger.error(
+            "Не заданы кука YANDEX_TV_COOKIE_I и/или X-TV-SK (ни в файле, ни в окружении). Прерывание парсинга."
+        )
         return
 
-    headers = {
+    initial_cookies_dict = {"i": cookie_i}
+    initial_headers_dict = {
         "X-Requested-With": "XMLHttpRequest",
-        "X-TV-SK": x_tv_sk,
-        "Cookie": f"i={cookie_i}"
+        "X-TV-SK": x_tv_sk_current,
     }
 
     async with aiohttp.ClientSession() as session:
+        new_sk_key = await _fetch_sk_key(
+            session, initial_cookies_dict, initial_headers_dict
+        )
+
+        if not new_sk_key:
+            logger.error(
+                "Не удалось получить актуальный X-TV-SK ключ. Прерывание парсинга."
+            )
+            return
+
+        if new_sk_key != x_tv_sk_current:
+            _save_sk_to_file(new_sk_key)
+            x_tv_sk_current = new_sk_key
+
+        working_headers = {
+            "X-Requested-With": "XMLHttpRequest",
+            "X-TV-SK": x_tv_sk_current,
+            "Cookie": f"i={cookie_i}",
+        }
+
         today = datetime.now(timezone.utc).date()
         all_parsed_events_for_upsert = []
         raw_events_for_logging = []
@@ -178,7 +235,7 @@ async def parse_yandex_schedule():
             }
 
             initial_data = await _fetch_schedule_page(
-                session, BASE_URL, base_params, headers
+                session, BASE_URL, base_params, working_headers
             )
 
             if initial_data is None:
@@ -213,7 +270,7 @@ async def parse_yandex_schedule():
                         "limit": chunk_info["limit"],
                     }
                     chunk_data = await _fetch_schedule_page(
-                        session, CHUNK_URL, chunk_params, headers
+                        session, CHUNK_URL, chunk_params, working_headers
                     )
                     if chunk_data and "schedules" in chunk_data:
                         day_schedules.extend(chunk_data["schedules"])
@@ -264,7 +321,9 @@ async def parse_yandex_schedule():
     deduplicated_events = list(unique_events_map.values())
     final_event_count = len(deduplicated_events)
     if total_events != final_event_count:
-        logger.info(f"После дедупликации осталось {final_event_count} уникальных событий (удалено {total_events - final_event_count}).")
+        logger.info(
+            f"После дедупликации осталось {final_event_count} уникальных событий (удалено {total_events - final_event_count})."
+        )
     else:
         logger.info("Дубликатов не найдено.")
 
@@ -289,8 +348,12 @@ async def parse_yandex_schedule():
     batch_size = 50
     try:
         async with uow:
-            logger.info(f"Начинаю сохранение/обновление {final_event_count} событий в БД...")
-            pbar = tqdm(total=final_event_count, desc="Сохранение в БД", unit=" событий")
+            logger.info(
+                f"Начинаю сохранение/обновление {final_event_count} событий в БД..."
+            )
+            pbar = tqdm(
+                total=final_event_count, desc="Сохранение в БД", unit=" событий"
+            )
             for i in range(0, final_event_count, batch_size):
                 batch = deduplicated_events[i : i + batch_size]
                 if not batch:
