@@ -2,6 +2,8 @@ version: '3.8'
 
 services:
   yandex-tv-schedule:
+    env_file:
+      - .env
     depends_on:
       - postgres
     
