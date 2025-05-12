@@ -15,6 +15,7 @@ from config import settings
 from database.uow.mldb import MldbUow
 from .schemas import EventModel
 from utils.error_handling import handle_critical_error
+from utils.exceptions import SKKeyFetchError
 
 BASE_URL = "https://tv.yandex.ru/api/213"
 CHUNK_URL = "https://tv.yandex.ru/api/213/main/chunk"
@@ -206,10 +207,7 @@ async def parse_yandex_schedule():
         )
 
         if not new_sk_key:
-            logger.error(
-                "Не удалось получить актуальный X-TV-SK ключ. Прерывание парсинга."
-            )
-            return
+            raise SKKeyFetchError("Не удалось получить актуальный X-TV-SK ключ. Прерывание парсинга.")
 
         if new_sk_key != x_tv_sk_current:
             _save_sk_to_file(new_sk_key)
