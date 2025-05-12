@@ -23,19 +23,15 @@ def handle_critical_error():
                 logger.exception(f"Critical error in {func.__name__}: {e}")
 
                 tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
-                traceback_str = "".join(tb_lines[-15:])
 
                 func_name_escaped = escape_markdown_v2(func.__name__)
                 error_type_escaped = escape_markdown_v2(type(e).__name__)
                 error_message_escaped = escape_markdown_v2(str(e))
-                traceback_escaped = escape_markdown_v2(traceback_str)
 
                 error_message_tg = (
                     f"🚨 *CRITICAL ERROR* in `{func_name_escaped}` 🚨\\n\\n"
                     f"*Error Type:* `{error_type_escaped}`\\n"
-                    f"*Message:* `{error_message_escaped}`\\n\\n"
-                    f"*Traceback (last 15 lines):*\\n"
-                    f"```\n{traceback_escaped}\n```"
+                    f"*Message:* `{error_message_escaped}`"
                 )
 
                 tg_token = settings.TELEGRAM_BOT_TOKEN
