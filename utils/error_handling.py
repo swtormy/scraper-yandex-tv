@@ -1,10 +1,16 @@
 import functools
 import traceback
+import re
 
 from loguru import logger
 
 from config import settings
 from utils.notifications import TGBotAPI, ParseMode
+
+
+def escape_markdown_v2(text: str) -> str:
+    escape_chars = r"[_*\[\]()~`>#+-=|{}.!]"
+    return re.sub(escape_chars, r"\\1", text)
 
 
 def handle_critical_error():
@@ -19,12 +25,17 @@ def handle_critical_error():
                 tb_lines = traceback.format_exception(type(e), e, e.__traceback__)
                 traceback_str = "".join(tb_lines[-15:])
 
-                error_message = (
-                    f"🚨 *CRITICAL ERROR* in `{func.__name__}` 🚨\\n\\n"
-                    f"*Error Type:* `{type(e).__name__}`\\n"
-                    f"*Message:* `{str(e)}`\\n\\n"
+                func_name_escaped = escape_markdown_v2(func.__name__)
+                error_type_escaped = escape_markdown_v2(type(e).__name__)
+                error_message_escaped = escape_markdown_v2(str(e))
+                traceback_escaped = escape_markdown_v2(traceback_str)
+
+                error_message_tg = (
+                    f"🚨 *CRITICAL ERROR* in `{func_name_escaped}` 🚨\\n\\n"
+                    f"*Error Type:* `{error_type_escaped}`\\n"
+                    f"*Message:* `{error_message_escaped}`\\n\\n"
                     f"*Traceback (last 15 lines):*\\n"
-                    f"```\n{traceback_str}\n```"
+                    f"```\n{traceback_escaped}\n```"
                 )
 
                 tg_token = settings.TELEGRAM_BOT_TOKEN
@@ -35,7 +46,7 @@ def handle_critical_error():
                         notifier = TGBotAPI(token=tg_token)
                         await notifier.send_message(
                             chat_id=tg_chat_id,
-                            text=error_message,
+                            text=error_message_tg,
                             parse_mode=ParseMode.MARKDOWN_V2,
                         )
                         logger.info(
