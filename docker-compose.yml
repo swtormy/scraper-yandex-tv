@@ -1,18 +1,15 @@
 version: '3.8'
 
 services:
-  db:
-    image: postgres:latest 
-    container_name: test_postgres_db
+  yandex-tv-schedule:
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-public}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data 
-    ports:
-      - "5432:5432"
+      - PYTHONPATH=/app
+    env_file:
+      - stack.env
+    command: python /app/main.py
+    working_dir: /app
     restart: unless-stopped
-
-volumes:
-  postgres_data:
+    
