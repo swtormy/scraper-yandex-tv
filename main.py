@@ -7,11 +7,13 @@ from loguru import logger
 import aiocron
 from database.uow.mldb import init_db
 from parsers.yandex_tv_parser import parse_yandex_schedule
+from config import settings
+from utils.notifications import TGBotAPI
 
 
 @aiocron.crontab("*/5 * * * *")
 async def scheduled_parsing_job():
-    
+
     logger.info("Запуск запланированной задачи парсинга...")
     try:
         await parse_yandex_schedule()
@@ -22,26 +24,34 @@ async def scheduled_parsing_job():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    
+
     logger.info("Инициализация приложения...")
     await init_db()
     logger.info("База данных инициализирована.")
 
     logger.info("Запуск первичной задачи парсинга в фоне...")
     initial_parse_task = asyncio.create_task(parse_yandex_schedule())
-    
 
     logger.info("Запуск планировщика задач aiocron...")
-    
+
+    if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID:
+        try:
+            notifier = TGBotAPI()
+            await notifier.send_message(
+                chat_id=settings.TELEGRAM_CHAT_ID,
+                text="📺 Yandex TV Parser запущен!",
+                parse_mode=None,
+            )
+            logger.info("Сообщение о старте приложения отправлено в Telegram.")
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение о старте в Telegram: {e}")
 
     logger.info("Приложение успешно запущено.")
 
     yield
 
-    
     logger.info("Начинаю корректную остановку...")
 
-    
     if initial_parse_task and not initial_parse_task.done():
         logger.info("Отмена первоначальной задачи парсинга...")
         initial_parse_task.cancel()
@@ -52,20 +62,33 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Ошибка при отмене первоначальной задачи: {e}")
 
-    
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     if tasks:
         logger.info(f"Отмена {len(tasks)} фоновых задач (включая aiocron)...")
         for task in tasks:
             task.cancel()
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        cancelled_count = sum(1 for r in results if isinstance(r, asyncio.CancelledError))
-        error_count = sum(1 for r in results if isinstance(r, Exception) and not isinstance(r, asyncio.CancelledError))
-        logger.info(f"Фоновые задачи завершены. Отменено: {cancelled_count}, Ошибки: {error_count}")
+        cancelled_count = sum(
+            1 for r in results if isinstance(r, asyncio.CancelledError)
+        )
+        error_count = sum(
+            1
+            for r in results
+            if isinstance(r, Exception) and not isinstance(r, asyncio.CancelledError)
+        )
+        logger.info(
+            f"Фоновые задачи завершены. Отменено: {cancelled_count}, Ошибки: {error_count}"
+        )
         for i, result in enumerate(results):
-             if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
-                 task_name = tasks[i].get_name() if hasattr(tasks[i], 'get_name') else f"Task-{i}"
-                 logger.error(f"Ошибка в фоновой задаче '{task_name}': {result}")
+            if isinstance(result, Exception) and not isinstance(
+                result, asyncio.CancelledError
+            ):
+                task_name = (
+                    tasks[i].get_name()
+                    if hasattr(tasks[i], "get_name")
+                    else f"Task-{i}"
+                )
+                logger.error(f"Ошибка в фоновой задаче '{task_name}': {result}")
     else:
         logger.info("Нет активных фоновых задач для отмены.")
     logger.info("Приложение корректно остановлено.")
